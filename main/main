@@ -1,0 +1,640 @@
+module lab5 (
+    input clk,
+    input run,
+    input reset,
+    output [4:0] state,
+    output [8:0] tempR0,
+    output [8:0] tempR1,
+    output [8:0] tempR2,
+    output [8:0] tempR3,
+    output [8:0] tempR4,
+    output [8:0] tempR5,
+    output [8:0] tempR6,
+    output [8:0] tempR7counter,
+    output [8:0] tempGout,
+    output [8:0] tempADDR,
+    output [8:0] tempDOUT,    
+    output [8:0] DINsort,
+    output [8:0] data,
+    output [3:0] tempmux1,
+    output [3:0] specQ,
+    output [8:0] leds,
+    output [8:0] DIN,
+    output [8:0] qmem,
+	 output [8:0] debug_A_temp,
+output [8:0] debug_B,
+output debug_M,
+    output en_led,
+    output R0in,
+    output R1in,
+    output R2in,
+    output R3in,
+    output R4in,
+    output R5in,
+    output R6in,
+    output R7in,
+    output Ain,
+    output Gin,
+    output ADDRin,
+    output DOUTin,
+    output addsub,
+    output W,
+    output incr_pc,
+    output done
+);
+
+    wire tempIRin;
+   wire [1:0] selout;
+    wire [1:0] selin;
+    wire [3:0] Sout1;
+   wire [3:0] S;
+    wire W_D;
+
+    // regs
+    nbitreg R0 (.rst(reset),.clk(clk),.en(R0in),.R(data),.Q(tempR0));
+    nbitreg R1 (.rst(reset),.clk(clk),.en(R1in),.R(data),.Q(tempR1));
+    nbitreg R2 (.rst(reset),.clk(clk),.en(R2in),.R(data),.Q(tempR2));
+    nbitreg R3 (.rst(reset),.clk(clk),.en(R3in),.R(data),.Q(tempR3));
+    nbitreg R4 (.rst(reset),.clk(clk),.en(R4in),.R(data),.Q(tempR4));
+    nbitreg R5 (.rst(reset),.clk(clk),.en(R5in),.R(data),.Q(tempR5));
+    nbitreg R6 (.rst(reset),.clk(clk),.en(R6in),.R(data),.Q(tempR6));    
+    PC_counter R7 (.rst(reset),.clk(clk),.R7in(R7in),.incr_pc(incr_pc),.R(data),.Q(tempR7counter));
+
+    // main mux
+    mymux1619bit main (.I0(tempR0),.I1(tempR1),.I2(tempR2),.I3(tempR3),.I4(tempR4),
+                          .I5(tempR5),.I6(tempR6),.I7(tempR7counter),.I8(tempGout),.I9(DIN),.I10(tempR7counter),.I11(9'b0),.S3(tempmux1[3]),.S2(tempmux1[2]),.S1(tempmux1[1]),.S0(tempmux1[0]),.Y(data));
+    // addsub
+	addsubunit u0 (
+    .clock(clk),
+    .reset(reset),
+    .addsub(addsub),
+    .Ain(Ain),
+    .Gin(Gin),
+    .A(data),
+    .S(tempGout),
+
+    // DEBUG
+    .debug_A_temp(debug_A_temp),
+    .debug_B(debug_B),
+    .debug_M(debug_M)
+);
+    // functional 
+    nbitreg addr (.rst(reset),.clk(clk),.en(ADDRin),.R(data),.Q(tempADDR));
+    nbitreg dout (.rst(reset),.clk(clk),.en(DOUTin),.R(data),.Q(tempDOUT));
+
+    // write
+    d_ff wr (.D(W_D),.clk(clk),.rst(reset),.Q(W));
+
+    // IRin
+    nbitreg IRin (.rst(reset),.clk(clk),.en(tempIRin),.R(DIN),.Q(DINsort));
+
+    // mem
+    mem memory (.addr(tempADDR),.dout(tempDOUT),.w(W),.clk(clk),.rst(reset),.q(qmem),.leds(leds),.en_led(en_led));
+    assign DIN = qmem & ~(~state[4] & state[3] & ~state[2] & state[1] & ~state[0]);
+
+    // control unit
+    controlunit cu (.specQ(specQ),.addr(tempADDR),.Gresult(tempGout),.done(done),.addsub(addsub),.rst(reset),.clk(clk),.op(DINsort),.run(run),.y(state),.tempmux1(tempmux1),.R0infinal(R0in),.R1infinal(R1in),
+    .R2infinal(R2in),.R3infinal(R3in),.R4infinal(R4in),.R5infinal(R5in),.R6infinal(R6in),.R7infinal(R7in),.Ain(Ain),.Gin(Gin),.IRin(tempIRin),.incr_pc(incr_pc),.W_D(W_D),.ADDRin(ADDRin),.DOUTin(DOUTin));
+
+endmodule
+module controlunit (
+    input rst,
+    input clk,
+    input [8:0] op,
+    input run,
+    input [8:0] Gresult, // nối với output S của addsub
+    input [8:0] addr,
+    output [4:0] y,
+    output [3:0] tempmux1, // gắn từng bit với sel của mux ngoài 
+    output IRin,
+    output addsub,
+    output done,
+    output incr_pc,
+    output W_D,
+    output [3:0] specQ, // output ra của dff chứa mvi sig và Rx cũ
+    output  R0infinal,R1infinal,R2infinal,R3infinal,R4infinal,R5infinal,R6infinal,R7infinal,Ain,Gin,ADDRin,DOUTin
+    );
+
+    wire [4:0] temps;
+    wire [3:0] insignal;
+    wire [2:0] selin;
+    wire [2:0] selout;
+    wire [3:0] S;
+    wire [3:0] Sout1;
+    wire [3:0] insignalspecial;
+    wire enRin;
+    wire enAin;
+    wire enGin; 
+    wire mvi_sig;
+    wire en;
+
+assign addsub = (~op[8] & op[7] & op[6]) & 
+                ((~y[4]& ~y[3]& y[2]& ~y[1]& y[0]) |   
+                 (~y[4]& ~y[3]& y[2]& ~y[1]& ~y[0]) |
+					  (~y[4]& ~y[3]& y[2]& y[1]& ~y[0])); // state G
+						
+    //State
+
+    next_state u0 (.rst(rst),.clk(clk),.op(op),.Gresult(Gresult),.addr(addr),.d(y),.specQ(specQ),.run(run),.s(temps));
+    present_state u1 (.rst(rst),.q(temps),.y(y),.clk(clk));
+
+    // MVI 2nd cycle
+    assign mvi_sig = ~y[4]& y[3]&~y[2]& y[1]& y[0];
+    assign re_rst = y[4]&~y[3]& ~y[2]& y[1]& ~y[0];
+    assign en = ~y[4]& y[3]&~y[2]& y[1]& y[0];
+
+    d_ff4bit u8(.oldRx(op[5:3]),.sig(mvi_sig),.clk(clk),.en(en),.re_rst(re_rst),.rst(rst),.Q(specQ));
+
+    mymux1614bit u5 (.I0(4'b0000),.I1(4'b0001),.I2(4'b0010),.I3(4'b0011),.I4(4'b0100),
+                          .I5(4'b0101),.I6(4'b0110),.I7(4'b0111),.I8(4'b1000),.I9(4'b1001),.I10(4'b1010),.I11(4'b1011),.S3(1'b0),.S2(specQ[3]),.S1(specQ[2]),.S0(specQ[1]),.Y(insignalspecial));
+
+    assign Scase = (y[4]& ~y[3]& ~y[2]& y[1]& ~y[0]);
+    assign R0inspecial = ~insignalspecial[3] &~insignalspecial[2] &~insignalspecial[1] &~insignalspecial[0] & Scase;
+    assign R1inspecial = ~insignalspecial[3] &~insignalspecial[2] &~insignalspecial[1] & insignalspecial[0] & Scase;
+    assign R2inspecial = ~insignalspecial[3] &~insignalspecial[2] & insignalspecial[1] &~insignalspecial[0] & Scase;
+    assign R3inspecial = ~insignalspecial[3] &~insignalspecial[2] & insignalspecial[1] & insignalspecial[0] & Scase;
+    assign R4inspecial = ~insignalspecial[3] & insignalspecial[2] &~insignalspecial[1] &~insignalspecial[0] & Scase;
+    assign R5inspecial = ~insignalspecial[3] & insignalspecial[2] &~insignalspecial[1] & insignalspecial[0] & Scase;
+    assign R6inspecial = ~insignalspecial[3] & insignalspecial[2] & insignalspecial[1] &~insignalspecial[0] & Scase;
+    assign R7inspecial = ~insignalspecial[3] & insignalspecial[2] & insignalspecial[1] & insignalspecial[0] & Scase;
+
+    // Sel out signal
+    statetoselout sss (.y(y),.sel(selout));
+
+    mymux81 S3out (.D0(1'b0),.D1(1'b0),.D2(1'b1),.D3(1'b1),.D4(1'b1),.S0(selout[0]),.S1(selout[1]),.S2(selout[2]),.Y(tempmux1[3])); // D2 là Gout, D3 là Din, D4 là R7out (đặc biệt)
+    mymux81 S2out (.D0(op[5]),.D1(op[2]),.D2(1'b0),.D3(1'b0),.D4(1'b0),.S0(selout[0]),.S1(selout[1]),.S2(selout[2]),.Y(tempmux1[2]));
+    mymux81 S1out (.D0(op[4]),.D1(op[1]),.D2(1'b0),.D3(1'b0),.D4(1'b1),.S0(selout[0]),.S1(selout[1]),.S2(selout[2]),.Y(tempmux1[1]));
+    mymux81 S0out (.D0(op[3]),.D1(op[0]),.D2(1'b1),.D3(1'b1),.D4(1'b0),.S0(selout[0]),.S1(selout[1]),.S2(selout[2]),.Y(tempmux1[0]));
+
+    // Sel in signal
+    statetoselin in (.y(y),.sel(selin));
+
+    mymux81 S3in (.D0(1'b0),.D1(1'b1),.D2(1'b1),.D3(1'b1),.D4(1'b1),.S0(selin[0]),.S1(selin[1]),.S2(selin[2]),.Y(Sout1[3])); // D1 là Ain, D2 là Gin, D3 là none
+    mymux81 S2in (.D0(op[5]),.D1(1'b0),.D2(1'b0),.D3(1'b0),.D4(1'b0),.S0(selin[0]),.S1(selin[1]),.S2(selin[2]),.Y(Sout1[2]));
+    mymux81 S1in (.D0(op[4]),.D1(1'b0),.D2(1'b0),.D3(1'b1),.D4(1'b1),.S0(selin[0]),.S1(selin[1]),.S2(selin[2]),.Y(Sout1[1]));
+    mymux81 S0in (.D0(op[3]),.D1(1'b0),.D2(1'b1),.D3(1'b0),.D4(1'b1),.S0(selin[0]),.S1(selin[1]),.S2(selin[2]),.Y(Sout1[0]));
+
+    mymux1614bit u6 (.I0(4'b0000),.I1(4'b0001),.I2(4'b0010),.I3(4'b0011),.I4(4'b0100),
+                          .I5(4'b0101),.I6(4'b0110),.I7(4'b0111),.I8(4'b1000),.I9(4'b1001),.I10(4'b1010),.I11(4'b1011),.S3(Sout1[3]),.S2(Sout1[2]),.S1(Sout1[1]),.S0(Sout1[0]),.Y(insignal));
+
+    assign enRin = (~y[4]& ~y[3]& y[2]& y[1]&~y[0])|(~y[4]& y[3]& ~y[2]& ~y[1]& y[0])|(~y[4]& y[3]& ~y[2]& y[1]& y[0])|(~y[4]& y[3]& y[2]& ~y[1]& ~y[0]);
+    assign enAin = (~y[4]& ~y[3]& y[2]& ~y[1]& ~y[0]);
+    assign enGin = (~y[4]& ~y[3]& y[2]& y[1]& ~y[0]);
+    assign enADDRin = (~y[4]& ~y[3]& ~y[2]& ~y[1]& y[0])|(~y[4]& y[3]& ~y[2]& ~y[1]& ~y[0]) |(~y[4]& y[3]& y[2]& y[1]& ~y[0]) | ( y[4]& ~y[3]& ~y[2]&  y[1]&  y[0]); 
+    assign enDOUTin = (~y[4]& y[3]& y[2]& y[1]& y[0]);
+    assign notS = ~(y[4]& ~y[3]& ~y[2]& y[1]& ~y[0]);
+
+    assign R0in = ~insignal[3] &~insignal[2] &~insignal[1] &~insignal[0] & enRin & notS;
+    assign R1in = ~insignal[3] &~insignal[2] &~insignal[1] & insignal[0] & enRin & notS;
+    assign R2in = ~insignal[3] &~insignal[2] & insignal[1] &~insignal[0] & enRin & notS;
+    assign R3in = ~insignal[3] &~insignal[2] & insignal[1] & insignal[0] & enRin & notS;
+    assign R4in = ~insignal[3] & insignal[2] &~insignal[1] &~insignal[0] & enRin & notS;
+    assign R5in = ~insignal[3] & insignal[2] &~insignal[1] & insignal[0] & enRin & notS;
+    assign R6in = ~insignal[3] & insignal[2] & insignal[1] &~insignal[0] & enRin & notS;
+    assign R7in = ~insignal[3] & insignal[2] & insignal[1] & insignal[0] & enRin & notS;
+    assign Ain =  insignal[3] &~insignal[2] &~insignal[1] &~insignal[0] & enAin;
+    assign Gin =  insignal[3] &~insignal[2] &~insignal[1] & insignal[0] & enGin;
+    assign ADDRin =  insignal[3] &~insignal[2] &insignal[1] &~insignal[0] & enADDRin;
+    assign DOUTin =  insignal[3] &~insignal[2] &insignal[1] & insignal[0] & enDOUTin;
+
+    // Rx in final signal
+    assign R0infinal = R0in | R0inspecial;
+    assign R1infinal = R1in | R1inspecial;
+    assign R2infinal = R2in | R2inspecial;
+    assign R3infinal = R3in | R3inspecial;
+    assign R4infinal = R4in | R4inspecial;
+    assign R5infinal = R5in | R5inspecial;
+    assign R6infinal = R6in | R6inspecial;
+    assign R7infinal = R7in | R7inspecial;
+
+    // Other signals
+    assign incr_pc = (~y[4]& ~y[3]& ~y[2]& y[1]& y[0]); // state D
+    assign W_D = ( y[4]& ~y[3]& ~y[2]& ~y[1]& ~y[0]); // state Q
+    assign IRin = (~y[4]& ~y[3]& ~y[2]& y[1]& ~y[0]);
+    assign done = (~y[4]& ~y[3]& y[2]& y[1]& y[0]);
+
+endmodule
+
+module statetoselout (
+    input  [4:0] y,
+    output [2:0] sel
+);
+
+assign sel[2] =
+    (~y[4] & ~y[3] & ~y[2] & ~y[1] &  y[0]) |  // B
+    ( y[4] & ~y[3] & ~y[2] &  y[1] &  y[0]);   // T ← thêm
+
+assign sel[1] =
+    (~y[4] &  y[3] & ~y[2] &  y[1] &  y[0]) |  // L
+    ( y[4] & ~y[3] & ~y[2] &  y[1] & ~y[0]);  // S
+
+assign sel[0] =
+    (~y[4] &  y[3] & ~y[2] & ~y[1] & ~y[0]) |  // I
+    (~y[4] &  y[3] & ~y[2] & ~y[1] &  y[0]) |  // J
+    (~y[4] &  y[3] &  y[2] & ~y[1] & ~y[0]) |  // M
+    (~y[4] &  y[3] &  y[2] & ~y[1] &  y[0]) |  // N
+    (~y[4] &  y[3] &  y[2] &  y[1] & ~y[0]) |  // O
+    (~y[4] &  y[3] & ~y[2] &  y[1] &  y[0]) |  // L
+    ( y[4] & ~y[3] & ~y[2] &  y[1] & ~y[0]) | // S
+    (~y[4] & ~y[3] &  y[2] & ~y[1] &  y[0]) | // F
+     (~y[4] & ~y[3] &  y[2] &  y[1] & ~y[0]);  // G 
+	  
+
+endmodule
+
+module statetoselin (
+    input  [4:0] y,
+    output [2:0] sel
+);
+
+    assign sel[2] = 
+    (~y[4] &  y[3] &  y[2] &  y[1] &  y[0]);
+
+    assign sel[1] = 
+    (~y[4] & ~y[3] & ~y[2] & ~y[1] &  y[0]) |
+    (~y[4] &  y[3] & ~y[2] & ~y[1] & ~y[0]) |
+    (~y[4] &  y[3] &  y[2] &  y[1] & ~y[0]) |
+	 (~y[4] & ~y[3] &  y[2] &  y[1] & ~y[0]); 
+
+    assign sel[0] = 
+    (~y[4] & ~y[3] & ~y[2] & ~y[1] &  y[0]) |
+    (~y[4] &  y[3] & ~y[2] & ~y[1] & ~y[0]) |
+    (~y[4] &  y[3] &  y[2] &  y[1] & ~y[0]) |
+    (~y[4] & ~y[3] &  y[2] & ~y[1] & ~y[0]);
+
+endmodule
+
+module mymux1619bit (
+    input  logic [8:0] I0, I1, I2, I3,
+    input  logic [8:0] I4, I5, I6, I7,
+    input  logic [8:0] I8, I9,I10, I11,
+    input  logic S3, S2, S1, S0,
+    output logic [8:0] Y
+);
+
+    mymux161 bit8 (.I0(I0[8]),.I1(I1[8]),.I2(I2[8]),.I3(I3[8]),.I4(I4[8]),.I5(I5[8]),.I6(I6[8]),.I7(I7[8]),.I8(I8[8]),.I9(I9[8]),.I10(I10[8]),.I11(I11[8]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[8]));
+    mymux161 bit7 (.I0(I0[7]),.I1(I1[7]),.I2(I2[7]),.I3(I3[7]),.I4(I4[7]),.I5(I5[7]),.I6(I6[7]),.I7(I7[7]),.I8(I8[7]),.I9(I9[7]),.I10(I10[7]),.I11(I11[7]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[7]));
+    mymux161 bit6 (.I0(I0[6]),.I1(I1[6]),.I2(I2[6]),.I3(I3[6]),.I4(I4[6]),.I5(I5[6]),.I6(I6[6]),.I7(I7[6]),.I8(I8[6]),.I9(I9[6]),.I10(I10[6]),.I11(I11[6]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[6]));
+    mymux161 bit5 (.I0(I0[5]),.I1(I1[5]),.I2(I2[5]),.I3(I3[5]),.I4(I4[5]),.I5(I5[5]),.I6(I6[5]),.I7(I7[5]),.I8(I8[5]),.I9(I9[5]),.I10(I10[5]),.I11(I11[5]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[5]));
+    mymux161 bit4 (.I0(I0[4]),.I1(I1[4]),.I2(I2[4]),.I3(I3[4]),.I4(I4[4]),.I5(I5[4]),.I6(I6[4]),.I7(I7[4]),.I8(I8[4]),.I9(I9[4]),.I10(I10[4]),.I11(I11[4]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[4]));
+    mymux161 bit3 (.I0(I0[3]),.I1(I1[3]),.I2(I2[3]),.I3(I3[3]),.I4(I4[3]),.I5(I5[3]),.I6(I6[3]),.I7(I7[3]),.I8(I8[3]),.I9(I9[3]),.I10(I10[3]),.I11(I11[3]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[3]));
+    mymux161 bit2 (.I0(I0[2]),.I1(I1[2]),.I2(I2[2]),.I3(I3[2]),.I4(I4[2]),.I5(I5[2]),.I6(I6[2]),.I7(I7[2]),.I8(I8[2]),.I9(I9[2]),.I10(I10[2]),.I11(I11[2]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[2]));
+    mymux161 bit1 (.I0(I0[1]),.I1(I1[1]),.I2(I2[1]),.I3(I3[1]),.I4(I4[1]),.I5(I5[1]),.I6(I6[1]),.I7(I7[1]),.I8(I8[1]),.I9(I9[1]),.I10(I10[1]),.I11(I11[1]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[1]));
+    mymux161 bit0 (.I0(I0[0]),.I1(I1[0]),.I2(I2[0]),.I3(I3[0]),.I4(I4[0]),.I5(I5[0]),.I6(I6[0]),.I7(I7[0]),.I8(I8[0]),.I9(I9[0]),.I10(I10[0]),.I11(I11[0]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[0]));
+
+endmodule
+
+module next_state (
+    input rst,
+    input clk,
+    input [8:0] op, // nối với opcode
+    input [4:0] d,
+    input run,
+    input [8:0] Gresult,
+    input [8:0] addr,
+    input [3:0] specQ,
+    output [4:0] s
+    );
+
+    wire A = ~d[4]&~d[3]&~d[2]&~d[1]&~d[0];
+    wire B = ~d[4]&~d[3]&~d[2]&~d[1]& d[0];
+    wire C = ~d[4]&~d[3]&~d[2]& d[1]&~d[0];
+    wire D = ~d[4]&~d[3]&~d[2]& d[1]& d[0];
+    wire E = ~d[4]&~d[3]& d[2]&~d[1]&~d[0];
+    wire F = ~d[4]&~d[3]& d[2]&~d[1]& d[0];
+    wire G = ~d[4]&~d[3]& d[2]& d[1]&~d[0];
+    wire H = ~d[4]&~d[3]& d[2]& d[1]& d[0];
+    wire I = ~d[4]& d[3]&~d[2]&~d[1]&~d[0];
+    wire J = ~d[4]& d[3]&~d[2]&~d[1]& d[0];
+    wire K = ~d[4]& d[3]&~d[2]& d[1]&~d[0];
+    wire L = ~d[4]& d[3]&~d[2]& d[1]& d[0];
+    wire M = ~d[4]& d[3]& d[2]&~d[1]&~d[0];
+    wire N = ~d[4]& d[3]& d[2]&~d[1]& d[0];
+    wire O = ~d[4]& d[3]& d[2]& d[1]&~d[0];
+    wire P = ~d[4]& d[3]& d[2]& d[1]& d[0];
+    wire Q =  d[4]&~d[3]&~d[2]&~d[1]&~d[0];
+    wire R =  d[4]&~d[3]&~d[2]&~d[1]& d[0];
+    wire S =  d[4]&~d[3]&~d[2]& d[1]&~d[0];
+    wire T =  d[4]&~d[3]&~d[2]& d[1]& d[0];
+    wire dt0;
+
+    wire mv = ~op[8] &~op[7] &~op[6];
+    wire mvi = ~op[8] &~op[7] & op[6];
+    wire add = ~op[8] & op[7] &~op[6];
+    wire sub = ~op[8] & op[7] & op[6]; 
+    wire ld =  op[8] & ~op[7] & ~op[6]; 
+    wire st =  op[8] & ~op[7] & op[6]; 
+    wire mvnz = op[8] & op[7] & ~op[6]; 
+
+    wire nonld = (~addr[8] & addr[7])|( addr[8] & ~addr[7])|(addr[8] & addr[7]);
+    wire nonwr = ( addr[8] & ~addr[7])|(addr[8] & addr[7]);
+
+    assign dt0 = ~(Gresult[8] | Gresult[7] | Gresult[6] | Gresult[5] | Gresult[4] | Gresult[3] | Gresult[2] | Gresult[1] | Gresult[0]);
+
+    // không cần nextA vì nextA là 00000 không có trong bit nào =1
+    wire nextB = ~rst & ((A & run) | H);
+    wire nextC = ~rst & T ;
+    wire nextD = ~rst & C;
+    wire nextE = ~rst & (D & (add|sub) & ~specQ[0]);
+    wire nextF = ~rst & E;
+    wire nextG = ~rst & F;
+    wire nextH = ~rst & (G|J|K|R|S|M|L|(N & dt0) | (O & nonwr));
+    wire nextI = ~rst & (D & ld & ~specQ[0]);
+    wire nextJ = ~rst & I;
+	 wire nextK = ~rst & (I & nonld);
+    wire nextL = ~rst & (D & mvi & ~specQ[0]);
+    wire nextM = ~rst & ((D & mv & ~specQ[0]) | (N & ~dt0));
+    wire nextN = ~rst & (D & mvnz & ~specQ[0]);
+    wire nextO = ~rst & (D & st & ~specQ[0]);
+    wire nextP = ~rst & O;
+    wire nextQ = ~rst & P;
+    wire nextR = ~rst & Q;
+    wire nextS = ~rst & (D & specQ[0]); 
+    wire nextT = ~rst & B;
+
+    assign s[4] = nextQ | nextR | nextS | nextT;
+    assign s[3] = nextI | nextJ | nextK | nextL | nextM | nextN | nextO | nextP;
+    assign s[2] = nextE | nextF | nextG | nextH | nextM | nextN | nextO | nextP;
+    assign s[1] = nextC | nextD | nextG | nextH | nextK | nextL | nextO | nextP | nextS | nextT;
+    assign s[0] = nextB | nextD | nextF | nextH | nextJ | nextL | nextN | nextP | nextR | nextT;
+
+endmodule
+
+module present_state(
+    input rst,
+    input clk,
+    input [4:0] q,
+    output [4:0] y
+    );
+
+    d_ff u0 (.D(q[0]),.rst(rst),.clk(clk),.Q(y[0]));
+    d_ff u1 (.D(q[1]),.rst(rst),.clk(clk),.Q(y[1]));
+    d_ff u2 (.D(q[2]),.rst(rst),.clk(clk),.Q(y[2]));
+    d_ff u3 (.D(q[3]),.rst(rst),.clk(clk),.Q(y[3]));
+    d_ff u4 (.D(q[4]),.rst(rst),.clk(clk),.Q(y[4]));
+
+endmodule
+
+module d_ff4bit (
+    input [2:0] oldRx, // nối với op 543
+    input sig, // nối với mvi_sig
+    input clk,
+    input rst,
+    input re_rst,
+    input en,
+    output [3:0] Q
+    );
+    d_ffmod bit3 (.D(oldRx[2]),.clk(clk),.en(en),.re_rst(re_rst),.rst(rst),.Q(Q[3]));
+    d_ffmod bit2 (.D(oldRx[1]),.clk(clk),.en(en),.re_rst(re_rst),.rst(rst),.Q(Q[2]));
+    d_ffmod bit1 (.D(oldRx[0]),.clk(clk),.en(en),.re_rst(re_rst),.rst(rst),.Q(Q[1]));
+    d_ffmod bit0 (.D(sig),.clk(clk),.en(en),.re_rst(re_rst),.rst(rst),.Q(Q[0]));
+
+endmodule
+
+module d_ffmod (
+    input logic D,
+    input clk,
+    input logic rst,
+    input re_rst,
+    input en,
+   output logic Q
+    );
+
+    always_ff @(posedge clk, posedge rst)
+    if (rst) 
+        Q <= 0;
+
+    else if (re_rst) Q <= 0;
+
+    else if (en)
+        Q <= D;
+    else 
+        Q <= Q;
+
+endmodule 
+
+module d_ff (
+    input logic D,
+    input clk,
+    input logic rst,
+   output logic Q
+    );
+
+    always_ff @(posedge clk, posedge rst)
+    if (rst) 
+        Q <= 0;
+    else
+        Q <= D;
+
+endmodule 
+
+module mymux81 (
+    input  logic D0, D1, D2, D3, D4,
+    input  logic S0, S1, S2,
+    output logic Y
+    );
+
+wire D5, D6, D7;
+
+assign D5 = 1'b0;
+assign D6 = 1'b0;
+assign D7 = 1'b0;
+
+assign Y = (~S2 & ~S1 & ~S0 & D0) |
+           (~S2 & ~S1 &  S0 & D1) |
+           (~S2 &  S1 & ~S0 & D2) |
+           (~S2 &  S1 &  S0 & D3) |
+           ( S2 & ~S1 & ~S0 & D4) |
+           ( S2 & ~S1 &  S0 & D5) |
+           ( S2 &  S1 & ~S0 & D6) |
+           ( S2 &  S1 &  S0 & D7);
+
+endmodule
+
+module mymux41 (
+    input logic  D0, D1, D2, D3,
+    input logic  S0,S1,
+    output logic Y
+    );
+ assign Y = (~S1 & ~S0 & D0) |
+           (~S1 &  S0 & D1) |
+           ( S1 & ~S0 & D2) |
+           ( S1 &  S0 & D3);
+
+endmodule
+
+module mymux21 (
+    input logic D1, D0,
+    input logic  sel,
+    output logic Y
+    );
+    assign Y = (~sel & D0) | (sel    & D1);  
+
+endmodule
+
+module nbitreg4bit (
+    input logic [3:0] R,
+    input logic rst,
+    input clk,
+    input en,
+    output reg [3:0] Q
+    );
+
+    always_ff @(posedge clk, posedge rst) 
+    if (rst) Q <= '0;
+    else if (en)  Q <= R;
+    else Q <= Q;
+
+endmodule
+ module addsubunit (
+    input logic [8:0] A,
+    input clock,
+    input reset,
+    input addsub,
+    input Ain,
+    input Gin,
+    output [8:0] S,
+	 output logic [8:0] debug_A_temp,
+    output logic [8:0] debug_B,
+    output logic debug_M
+
+
+    );
+    wire [8:0] A_temp;
+    wire [8:0] S_temp;
+    wire [8:0] temp;
+    wire tempco;    
+    wire tempovf;
+    nbitreg A1 (.R(A),.rst(reset),.en(Ain),.clk(clock),.Q(A_temp));
+    nbitreg G1 (.R(S_temp),.en(Gin),.rst(reset),.clk(clock),.Q(S));
+    EBA u2 (.A(A_temp),.B(A),.S(S_temp),.M(addsub));
+	 
+	 assign debug_A_temp = A_temp;
+    assign debug_B      = A;
+    assign debug_M      = addsub;
+
+endmodule
+
+ module EBA (
+    input  logic [8:0] A, B,
+    input  M,
+    output logic [8:0] S
+);
+    logic [7:0] temp;
+    FA u0 (.a(A[0]),.b(B[0]^M),.ci(M),       .s(S[0]),.co(temp[0]));
+    FA u1 (.a(A[1]),.b(B[1]^M),.ci(temp[0]), .s(S[1]),.co(temp[1]));
+    FA u2 (.a(A[2]),.b(B[2]^M),.ci(temp[1]), .s(S[2]),.co(temp[2]));
+    FA u3 (.a(A[3]),.b(B[3]^M),.ci(temp[2]), .s(S[3]),.co(temp[3]));
+    FA u4 (.a(A[4]),.b(B[4]^M),.ci(temp[3]), .s(S[4]),.co(temp[4]));
+    FA u5 (.a(A[5]),.b(B[5]^M),.ci(temp[4]), .s(S[5]),.co(temp[5]));
+    FA u6 (.a(A[6]),.b(B[6]^M),.ci(temp[5]), .s(S[6]),.co(temp[6]));
+    FA u7 (.a(A[7]),.b(B[7]^M),.ci(temp[6]), .s(S[7]),.co(temp[7]));
+    FA u8 (.a(A[8]),.b(B[8]^M),.ci(temp[7]), .s(S[8]),.co());
+endmodule
+
+module FA (
+    input logic a,b,ci,
+    output logic s, co
+   );
+
+    assign s = a^b^ci;
+    assign co=a&b|ci&a|ci&b;
+
+endmodule
+
+module nbitreg (
+    input logic [8:0] R,
+    input logic rst,
+    input clk,
+    input en,
+    output reg [8:0] Q
+    );
+
+    always_ff @(posedge clk, posedge rst) 
+    if (rst) Q <= '0;
+    else if (en)  Q <= R;
+    else Q <= Q;
+
+endmodule
+module mem (
+	input [8:0] addr,
+	input [8:0] dout,
+	input w,
+	input clk,
+	input rst,
+	output en_led,
+	output [8:0] q,
+	output [8:0] leds
+	);
+	
+	assign wr_en = ~(addr[7] | addr[8]) & w;	
+	assign en_led = ~(~addr[7] | addr[8]) & w;
+	
+	ram_inst u0 (.address(addr[6:0]),.data(dout),.wren(wr_en),.q(q),.clock(clk));
+	nbitreg led (.clk(clk),.rst(rst),.R(dout),.en(en_led),.Q(leds));
+	
+endmodule 
+module mymux161 (
+    input  logic I0, I1, I2, I3,
+    input  logic I4, I5, I6, I7,
+    input  logic I8, I9, I10, I11,
+    input  logic S3, S2, S1, S0,
+    output logic Y
+);
+
+    logic I12, I13, I14, I15;
+
+  
+    assign I12 = 1'b0;
+    assign I13 = 1'b0;
+    assign I14 = 1'b0;
+    assign I15 = 1'b0;
+
+    assign Y = (~S3 & ~S2 & ~S1 & ~S0 & I0)
+             | (~S3 & ~S2 & ~S1 &  S0 & I1)
+             | (~S3 & ~S2 &  S1 & ~S0 & I2)
+             | (~S3 & ~S2 &  S1 &  S0 & I3)
+             | (~S3 &  S2 & ~S1 & ~S0 & I4)
+             | (~S3 &  S2 & ~S1 &  S0 & I5)
+             | (~S3 &  S2 &  S1 & ~S0 & I6)
+             | (~S3 &  S2 &  S1 &  S0 & I7)
+             | ( S3 & ~S2 & ~S1 & ~S0 & I8)
+             | ( S3 & ~S2 & ~S1 &  S0 & I9)
+             | ( S3 & ~S2 &  S1 & ~S0 & I10)
+             | ( S3 & ~S2 &  S1 &  S0 & I11)
+             | ( S3 &  S2 & ~S1 & ~S0 & I12)
+             | ( S3 &  S2 & ~S1 &  S0 & I13)
+             | ( S3 &  S2 &  S1 & ~S0 & I14)
+             | ( S3 &  S2 &  S1 &  S0 & I15);
+
+endmodule
+
+module mymux1614bit (
+    input  logic [3:0] I0, I1, I2, I3,
+    input  logic [3:0] I4, I5, I6, I7,
+    input  logic [3:0] I8, I9, I10, I11,
+    input  logic S3, S2, S1, S0,
+    output logic [3:0] Y
+);
+    mymux161 bit3 (.I0(I0[3]),.I1(I1[3]),.I2(I2[3]),.I3(I3[3]),.I4(I4[3]),.I5(I5[3]),.I6(I6[3]),.I7(I7[3]),.I8(I8[3]),.I9(I9[3]),.I10(I10[3]),.I11(I11[3]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[3]));
+    mymux161 bit2 (.I0(I0[2]),.I1(I1[2]),.I2(I2[2]),.I3(I3[2]),.I4(I4[2]),.I5(I5[2]),.I6(I6[2]),.I7(I7[2]),.I8(I8[2]),.I9(I9[2]),.I10(I10[2]),.I11(I11[2]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[2]));
+    mymux161 bit1 (.I0(I0[1]),.I1(I1[1]),.I2(I2[1]),.I3(I3[1]),.I4(I4[1]),.I5(I5[1]),.I6(I6[1]),.I7(I7[1]),.I8(I8[1]),.I9(I9[1]),.I10(I10[1]),.I11(I11[1]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[1]));
+    mymux161 bit0 (.I0(I0[0]),.I1(I1[0]),.I2(I2[0]),.I3(I3[0]),.I4(I4[0]),.I5(I5[0]),.I6(I6[0]),.I7(I7[0]),.I8(I8[0]),.I9(I9[0]),.I10(I10[0]),.I11(I11[0]),.S3(S3),.S2(S2),.S1(S1),.S0(S0),.Y(Y[0]));
+endmodule
+
+
+module PC_counter (
+    input  logic [8:0] R,      
+    input  logic rst,
+    input  logic clk,
+    input  logic incr_pc,      
+    input  logic R7in,         
+    output reg   [8:0] Q
+);
+    always_ff @(posedge clk, posedge rst)
+    if (rst)          Q <= '0;
+    else if (R7in)    Q <= R;       
+    else if (incr_pc) Q <= Q + 1;   
+    else              Q <= Q;       
+
+endmodule
